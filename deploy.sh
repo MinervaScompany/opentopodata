@@ -11,11 +11,20 @@ CONTAINER_PORT=5000
 DATA_DIR="${DATA_DIR:-${ROOT_DIR}/data}"
 DATASET_NAME="${DATASET_NAME:-copernicus_30m}"
 DATASET_DIR="${DATA_DIR}/${DATASET_NAME}"
+FALLBACK_DATA_DIR="${ROOT_DIR}/../copernicus/opentopodata/data"
+FALLBACK_DATASET_DIR="${FALLBACK_DATA_DIR}/${DATASET_NAME}"
+
+if [ ! -d "${DATASET_DIR}" ] && [ -d "${FALLBACK_DATASET_DIR}" ]; then
+    DATA_DIR="${FALLBACK_DATA_DIR}"
+    DATASET_DIR="${FALLBACK_DATASET_DIR}"
+    echo "Using fallback data directory: ${DATA_DIR}"
+fi
 
 if [ ! -d "${DATASET_DIR}" ]; then
     echo "Error: dataset folder not found: ${DATASET_DIR}" >&2
-    echo "Set DATA_DIR to the parent folder that contains '${DATASET_NAME}'." >&2
-    echo "Example: DATA_DIR=/mnt/dem ./deploy.sh" >&2
+    echo "Copy the dataset into ${ROOT_DIR}/data and run ./deploy.sh" >&2
+    echo "Suggested copy command:" >&2
+    echo "  sudo rsync -a ${FALLBACK_DATASET_DIR}/ ${ROOT_DIR}/data/${DATASET_NAME}/" >&2
     exit 1
 fi
 
