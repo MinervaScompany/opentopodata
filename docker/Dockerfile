@@ -1,5 +1,5 @@
 # Container for packages that need to be built from source but have massive dev dependencies.
-FROM python:3.11.10-slim-bookworm as builder
+FROM python:3.11.10-slim-bookworm AS builder
 RUN set -e && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
