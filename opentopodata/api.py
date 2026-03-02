@@ -299,6 +299,85 @@ def _parse_locations(locations, max_n_locations):
         return _parse_polyline_locations(locations, max_n_locations)
 
 
+def _parse_coords_locations(coords, max_n_locations):
+    """Parse and validate locations from a coords JSON array.
+
+    Args:
+        coords: List of {"lat": ..., "lng": ...} objects.
+        max_n_locations: The max allowable number of locations.
+
+    Returns:
+        lats: List of latitude floats.
+        lons: List of longitude floats.
+
+    Raises:
+        ClientError: If coords is invalid.
+    """
+    if not isinstance(coords, list):
+        raise ClientError(
+            "Invalid coords value. 'coords' must be an array of {lat, lng} objects."
+        )
+
+    n_locations = len(coords)
+    if n_locations == 0:
+        msg = "No locations provided."
+        msg += " Provide coords in request body: {'coords': [{'lat': 1, 'lng': 2}]}."
+        raise ClientError(msg)
+    if n_locations > max_n_locations:
+        msg = f"Too many locations provided ({n_locations}), the limit is {max_n_locations}."
+        raise ClientError(msg)
+
+    lats = []
+    lons = []
+    for i, loc in enumerate(coords):
+        if not isinstance(loc, dict) or "lat" not in loc or "lng" not in loc:
+            msg = f"Unable to parse coords item in position {i+1}."
+            msg += " Each item must have 'lat' and 'lng'."
+            raise ClientError(msg)
+
+        try:
+            lat = float(loc["lat"])
+            lon = float(loc["lng"])
+        except (TypeError, ValueError):
+            msg = f"Unable to parse coords item in position {i+1}."
+            msg += " 'lat' and 'lng' must be numbers."
+            raise ClientError(msg)
+
+        if not (LAT_MIN <= lat <= LAT_MAX):
+            msg = f"Unable to parse coords item in position {i+1}."
+            msg += f" Latitude must be between {LAT_MIN} and {LAT_MAX}."
+            raise ClientError(msg)
+        if not (LON_MIN <= lon <= LON_MAX):
+            msg = f"Unable to parse coords item in position {i+1}."
+            msg += f" Longitude must be between {LON_MIN} and {LON_MAX}."
+            raise ClientError(msg)
+
+        lats.append(lat)
+        lons.append(lon)
+
+    return lats, lons
+
+
+def _parse_request_locations(request, max_n_locations):
+    """Parse locations from either legacy `locations` or JSON `coords`."""
+    locations = _find_request_argument(request, "locations")
+    if locations:
+        return _parse_locations(locations, max_n_locations)
+
+    if request.method == "POST" and request.is_json:
+        try:
+            json_data = request.get_json()
+        except Exception:
+            raise ClientError("Invalid JSON.")
+        if isinstance(json_data, dict) and "coords" in json_data:
+            return _parse_coords_locations(json_data["coords"], max_n_locations)
+
+    msg = "No locations provided."
+    msg += " Add locations in a query string: ?locations=lat1,lon1|lat2,lon2."
+    msg += " Or POST JSON with {'coords': [{'lat': 1, 'lng': 2}]}."
+    raise ClientError(msg)
+
+
 def _parse_polyline_locations(locations, max_n_locations):
     """Parse and validate locations in Google polyline format.
 
@@ -530,9 +609,8 @@ def get_elevation(dataset_name):
         nodata_value = _parse_nodata_value(
             _find_request_argument(request, "nodata_value")
         )
-        lats, lons = _parse_locations(
-            _find_request_argument(request, "locations"),
-            _load_config()["max_locations_per_request"],
+        lats, lons = _parse_request_locations(
+            request, _load_config()["max_locations_per_request"]
         )
         format = _parse_format(_find_request_argument(request, "format"))
 
@@ -550,27 +628,31 @@ def get_elevation(dataset_name):
             lats, lons, datasets, interpolation, nodata_value
         )
 
+        # POST responses return a flat elevation array in input order.
+        if request.method == "POST":
+            data = {"status": "OK", "elevation_array": elevations}
+            return jsonify(data)
+
         # Build response.
         results = []
 
         # Convert to json or geojson format.
         if format == "geojson":
-            for z, dataset_name, lat, lon in zip(elevations, dataset_names, lats, lons):
+            for z, _dataset_name, lat, lon in zip(elevations, dataset_names, lats, lons):
                 results.append(
                     {
                         "type": "Feature",
                         "geometry": {"type": "Point", "coordinates": [lon, lat, z]},
-                        "properties": {"dataset": dataset_name},
+                        "properties": {},
                     },
                 )
             data = {"type": "FeatureCollection", "features": results}
 
         else:
-            for z, dataset_name, lat, lon in zip(elevations, dataset_names, lats, lons):
+            for z, _dataset_name, lat, lon in zip(elevations, dataset_names, lats, lons):
                 results.append(
                     {
                         "elevation": z,
-                        "dataset": dataset_name,
                         "location": {"lat": lat, "lng": lon},
                     }
                 )
